@@ -16,34 +16,27 @@ function uid() {
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// ── Room configuration ────────────────────────────────────
 const ROOMS    = 8;
 const DRY_DAYS = 10;
 function roomCap(n) { return n % 2 === 0 ? 12000 : 10000; }
 
-// Ensure sessions directory exists
 fs.mkdirSync(path.join(__dirname, 'data'), { recursive: true });
 
-// ── Middleware ────────────────────────────────────────────
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.use(session({
-  store: new SQLiteStore({
-    db:  'sessions.db',
-    dir: path.join(__dirname, 'data')
-  }),
-  secret:            process.env.SESSION_SECRET || 'change-this-secret-in-production',
-  resave:            false,
+  store: new SQLiteStore({ db: 'sessions.db', dir: path.join(__dirname, 'data') }),
+  secret: process.env.SESSION_SECRET || 'change-this-secret-in-production',
+  resave: false,
   saveUninitialized: false,
   cookie: {
     secure:   process.env.NODE_ENV === 'production',
     httpOnly: true,
-    maxAge:   8 * 60 * 60 * 1000   // 8 hours
+    maxAge:   8 * 60 * 60 * 1000
   }
 }));
 
-// ── Auth middleware ───────────────────────────────────────
 function requireAuth(req, res, next) {
   if (req.session && req.session.user) return next();
   res.status(401).json({ error: 'Not authenticated' });
@@ -53,25 +46,17 @@ function requireAdmin(req, res, next) {
   res.status(403).json({ error: 'Admin access required' });
 }
 
-// ═══════════════════════════════════════════════════════════
-// AUTH ROUTES
-// ═══════════════════════════════════════════════════════════
+// ── AUTH ───────────────────────────────────────────────
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body;
-  if (!username || !password)
-    return res.status(400).json({ error: 'Username and password required' });
-
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
   const user = users.verify(username, password);
-  if (!user)
-    return res.status(401).json({ error: 'Invalid username or password' });
-
+  if (!user) return res.status(401).json({ error: 'Invalid username or password' });
   req.session.user = user;
   res.json({ user: { username: user.username, role: user.role } });
 });
 
-app.post('/api/auth/logout', (req, res) => {
-  req.session.destroy(() => res.json({ ok: true }));
-});
+app.post('/api/auth/logout', (req, res) => { req.session.destroy(() => res.json({ ok: true })); });
 
 app.get('/api/auth/me', (req, res) => {
   if (req.session && req.session.user)
@@ -81,82 +66,51 @@ app.get('/api/auth/me', (req, res) => {
 
 app.post('/api/auth/change-password', requireAuth, requireAdmin, (req, res) => {
   const { newPassword } = req.body;
-  if (!newPassword || newPassword.length < 8)
-    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  if (!newPassword || newPassword.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
   users.changePassword(req.session.user.username, newPassword);
   res.json({ ok: true });
 });
 
-// ═══════════════════════════════════════════════════════════
-// CLIENT ROUTES
-// ═══════════════════════════════════════════════════════════
-app.get('/api/clients', requireAuth, (req, res) => {
-  res.json(clients.all().map(normalizeClient));
-});
+// ── CLIENTS ────────────────────────────────────────────
+app.get('/api/clients', requireAuth, (req, res) => { res.json(clients.all().map(normalizeClient)); });
 
 app.post('/api/clients', requireAuth, (req, res) => {
   const { name, dba, metrc, bizLicense, address } = req.body;
-  if (!name || !metrc || !bizLicense || !address)
-    return res.status(400).json({ error: 'Missing required fields' });
+  if (!name || !metrc || !bizLicense || !address) return res.status(400).json({ error: 'Missing required fields' });
   const id = uid();
-  const client = clients.create({ id, name, dba, metrc, bizLicense, address });
-  res.status(201).json(normalizeClient(client));
+  res.status(201).json(normalizeClient(clients.create({ id, name, dba, metrc, bizLicense, address })));
 });
 
 app.put('/api/clients/:id', requireAuth, (req, res) => {
   const { name, dba, metrc, bizLicense, address } = req.body;
-  if (!name || !metrc || !bizLicense || !address)
-    return res.status(400).json({ error: 'Missing required fields' });
+  if (!name || !metrc || !bizLicense || !address) return res.status(400).json({ error: 'Missing required fields' });
   const client = clients.update({ id: req.params.id, name, dba, metrc, bizLicense, address });
   if (!client) return res.status(404).json({ error: 'Client not found' });
   res.json(normalizeClient(client));
 });
 
 function normalizeClient(c) {
-  return {
-    id:         c.id,
-    name:       c.name,
-    dba:        c.dba,
-    metrc:      c.metrc,
-    bizLicense: c.biz_license,
-    address:    c.address,
-    createdAt:  c.created_at
-  };
+  return { id: c.id, name: c.name, dba: c.dba, metrc: c.metrc, bizLicense: c.biz_license, address: c.address, createdAt: c.created_at };
 }
 
-// ═══════════════════════════════════════════════════════════
-// BOOKING ROUTES
-// ═══════════════════════════════════════════════════════════
-app.get('/api/bookings', requireAuth, (req, res) => {
-  res.json(bookings.all());
-});
+// ── BOOKINGS ───────────────────────────────────────────
+app.get('/api/bookings', requireAuth, (req, res) => { res.json(bookings.all()); });
 
 app.post('/api/bookings', requireAuth, (req, res) => {
   const err = validateBookingBody(req.body);
   if (err) return res.status(400).json({ error: err });
-
   const { harvestDate, wetWeight, services, depositAmount, depositReceived, clientId } = req.body;
-
   const start = new Date(harvestDate); start.setHours(0, 0, 0, 0);
   const end   = new Date(start);       end.setDate(end.getDate() + DRY_DAYS - 1);
-
   const rooms = assignRooms(wetWeight, start.toISOString(), end.toISOString(), null);
   if (!rooms) return res.status(409).json({ error: 'No room capacity available for those dates' });
-
-  const total = calcTotal(wetWeight, services, settings.get('pricing'));
-  const id    = uid();
+  const total  = calcTotal(wetWeight, services, settings.get('pricing'));
+  const id     = uid();
   const invNum = 'HV-' + new Date().getFullYear() + '-' + String(Math.floor(Math.random() * 9000) + 1000);
-
   const booking = bookings.save({
-    id, clientId, harvestDate, wetWeight,
-    services, rooms: rooms.map(r => ({
-      room:      r,
-      startDate: start.toISOString(),
-      endDate:   end.toISOString()
-    })),
-    total, depositAmount: depositAmount || 0,
-    depositReceived: depositReceived || 'pending',
-    invoiceNum: invNum
+    id, clientId, harvestDate, wetWeight, services,
+    rooms: rooms.map(r => ({ room: r, startDate: start.toISOString(), endDate: end.toISOString() })),
+    total, depositAmount: depositAmount || 0, depositReceived: depositReceived || 'pending', invoiceNum: invNum
   });
   res.status(201).json(booking);
 });
@@ -164,29 +118,18 @@ app.post('/api/bookings', requireAuth, (req, res) => {
 app.put('/api/bookings/:id', requireAuth, (req, res) => {
   const existing = bookings.findById(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Booking not found' });
-
   const err = validateBookingBody(req.body);
   if (err) return res.status(400).json({ error: err });
-
   const { harvestDate, wetWeight, services, depositAmount, depositReceived, clientId } = req.body;
-
   const start = new Date(harvestDate); start.setHours(0, 0, 0, 0);
   const end   = new Date(start);       end.setDate(end.getDate() + DRY_DAYS - 1);
-
   const rooms = assignRooms(wetWeight, start.toISOString(), end.toISOString(), req.params.id);
   if (!rooms) return res.status(409).json({ error: 'No room capacity available for those dates' });
-
   const total = calcTotal(wetWeight, services, settings.get('pricing'));
-
   const booking = bookings.save({
-    id: req.params.id, clientId, harvestDate, wetWeight,
-    services, rooms: rooms.map(r => ({
-      room:      r,
-      startDate: start.toISOString(),
-      endDate:   end.toISOString()
-    })),
-    total, depositAmount: depositAmount || 0,
-    depositReceived: depositReceived || 'pending',
+    id: req.params.id, clientId, harvestDate, wetWeight, services,
+    rooms: rooms.map(r => ({ room: r, startDate: start.toISOString(), endDate: end.toISOString() })),
+    total, depositAmount: depositAmount || 0, depositReceived: depositReceived || 'pending',
     invoiceNum: existing.invoice_num || existing.invoiceNum
   });
   res.json(booking);
@@ -201,42 +144,33 @@ app.delete('/api/bookings/:id', requireAuth, requireAdmin, (req, res) => {
 
 function validateBookingBody(body) {
   const { clientId, harvestDate, wetWeight } = body;
-  if (!clientId)    return 'clientId is required';
+  if (!clientId) return 'clientId is required';
   if (!harvestDate) return 'harvestDate is required';
   if (!wetWeight || wetWeight <= 0) return 'wetWeight must be a positive number';
   if (!clients.findById(clientId)) return 'Client not found';
   return null;
 }
 
-// ═══════════════════════════════════════════════════════════
-// SETTINGS ROUTES (admin only)
-// ═══════════════════════════════════════════════════════════
+// ── SETTINGS ───────────────────────────────────────────
 app.get('/api/settings', requireAuth, (req, res) => {
-  res.json({
-    pricing:    settings.get('pricing'),
-    depositPct: Number(settings.get('deposit_pct'))
-  });
+  res.json({ pricing: settings.get('pricing'), depositPct: Number(settings.get('deposit_pct')) });
 });
 
 app.put('/api/settings', requireAuth, requireAdmin, (req, res) => {
   const { pricing, depositPct } = req.body;
-  if (pricing)    settings.set('pricing',     pricing);
+  if (pricing) settings.set('pricing', pricing);
   if (depositPct !== undefined) settings.set('deposit_pct', String(depositPct));
   res.json({ ok: true });
 });
 
-// ═══════════════════════════════════════════════════════════
-// ROOM AVAILABILITY HELPER
-// ═══════════════════════════════════════════════════════════
+// ── ROOM ENGINE ────────────────────────────────────────
 function assignRooms(lbs, startISO, endISO, excludeBookingId) {
-  // Build list of available rooms sorted by capacity (largest first)
   const available = [];
   for (let r = 1; r <= ROOMS; r++) {
     const conflicts = bookings.conflictsForRoom(r, startISO, endISO, excludeBookingId);
     if (conflicts.length === 0) available.push({ r, cap: roomCap(r) });
   }
   available.sort((a, b) => b.cap - a.cap);
-
   let remaining = lbs;
   const assigned = [];
   for (const a of available) {
@@ -255,18 +189,11 @@ function calcTotal(wetWeight, services, pricing) {
   }, 0);
 }
 
-// ═══════════════════════════════════════════════════════════
-// CATCH-ALL — serve index.html for client-side routing
-// ═══════════════════════════════════════════════════════════
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+// ── CATCH-ALL ──────────────────────────────────────────
+app.get('*', (req, res) => { res.sendFile(path.join(__dirname, 'public', 'index.html')); });
 
-// ── Start ─────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`Harvest Vault running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  if (users.count() === 0) {
-    console.log('\n⚠️  No users found. Run: npm run setup-admin\n');
-  }
+  if (users.count() === 0) console.log('\n⚠️  No users found. Run: npm run setup-admin\n');
 });
