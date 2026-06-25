@@ -2,7 +2,7 @@
 FROM node:20-bookworm-slim
 
 # better-sqlite3 needs build tools to compile its native binding
-RUN apt-get update && apt-get install -y --no-install-recursive \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
     g++ \
